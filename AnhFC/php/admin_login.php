@@ -1,27 +1,9 @@
-<?php
-session_start();
-
-// Ngăn cache
-header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
-header("Cache-Control: post-check=0, pre-check=0", false);
-header("Pragma: no-cache");
-header("Expires: 0");
-
-// Không include user_header.php nếu đã đăng nhập để tránh vòng lặp
-if (!isset($_SESSION['user_id'])) {
-    include 'user_header.php';
-}
-?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <title>Đăng Nhập Người Dùng</title>
+    <title>Đăng Nhập Admin</title>
     <link rel="stylesheet" href="../css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -44,7 +26,7 @@ if (!isset($_SESSION['user_id'])) {
             background-color: #fff;
             border: 1px solid #ddd;
             border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
 
         .login-form h1 {
@@ -89,35 +71,17 @@ if (!isset($_SESSION['user_id'])) {
             text-align: center;
             margin-bottom: 15px;
         }
-
-        .register-link {
-            text-align: center;
-            margin-top: 15px;
-        }
-
-        .register-link a {
-            color: #333;
-            text-decoration: none;
-        }
-
-        .register-link a:hover {
-            text-decoration: underline;
-        }
     </style>
 </head>
 <body>
     <div class="login-form">
-        <h1>Đăng Nhập Người Dùng</h1>
+        <h1>Đăng Nhập Admin</h1>
         <?php
-        if (isset($_GET['error'])) {
-            if ($_GET['error'] == 1) {
-                echo "<p class='error-message'>Sai tên đăng nhập hoặc mật khẩu. Vui lòng thử lại!</p>";
-            } elseif ($_GET['error'] == 2) {
-                echo "<p class='error-message'>Tài khoản admin không được phép đăng nhập ở đây!</p>";
-            }
+        if (isset($_GET['error']) && $_GET['error'] == 1) {
+            echo "<p class='error-message'>Sai tên đăng nhập, mật khẩu hoặc không phải admin!</p>";
         }
         ?>
-        <form method="POST" action="process_user_login.php">
+        <form method="POST" action="process_admin_login.php">
             <label for="username">Tên Đăng Nhập:</label>
             <input type="text" id="username" name="username" required>
 
@@ -126,11 +90,6 @@ if (!isset($_SESSION['user_id'])) {
 
             <button type="submit">Đăng Nhập</button>
         </form>
-        <div class="register-link">
-            <p>Bạn chưa có tài khoản? <a href="user_register.php">Đăng ký ngay!</a></p>
-        </div>
     </div>
 </body>
 </html>
-
-<?php include 'footer.php'; ?>

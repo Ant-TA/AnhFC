@@ -1,33 +1,42 @@
 <?php
 session_start();
-include 'dbconnection.php'; // Kết nối cơ sở dữ liệu
+include 'dbconnection.php';
 
-// Lấy dữ liệu từ biểu mẫu
-$username = isset($_POST['username']) ? $_POST['username'] : '';
-$password = isset($_POST['password']) ? $_POST['password'] : '';
+// Ngăn cache
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+header("Expires: 0");
 
-// Kiểm tra tên đăng nhập trong bảng users
-$sql = "SELECT * FROM users WHERE username = '$username'";
-$result = $conn->query($sql);
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $username = $conn->real_escape_string($_POST['username']);
+    $password = $_POST['password'];
 
-if ($result->num_rows > 0) {
+    // Truy vấn kiểm tra người dùng
+    $stmt = $conn->prepare("SELECT id, username, password, is_admin FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
     $user = $result->fetch_assoc();
-    // Kiểm tra mật khẩu
-    if (password_verify($password, $user['password'])) {
-        // Đăng nhập thành công
-        $_SESSION['user_loggedin'] = true;
-        $_SESSION['username'] = $username;
-        header("Location: user_dashboard.php");
-        exit;
+    $stmt->close();
+
+    if ($user && password_verify($password, $user['password'])) {
+        // Kiểm tra nếu là admin
+        if ($user['is_admin'] == 1) {
+            // Không cho đăng nhập, hiển thị lỗi như sai thông tin
+            header("Location: user_login.php?error=1");
+            exit;
+        } else {
+            // Đăng nhập thành công cho user thường
+            $_SESSION['user_id'] = $user['id'];
+            header("Location: menu.php");
+            exit;
+        }
     } else {
-        // Sai mật khẩu
+        // Sai tên đăng nhập hoặc mật khẩu
         header("Location: user_login.php?error=1");
         exit;
     }
-} else {
-    // Sai tên đăng nhập
-    header("Location: user_login.php?error=1");
-    exit;
 }
 
 $conn->close();
