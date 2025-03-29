@@ -1,8 +1,27 @@
+<?php
+include 'dbconnection.php';
+
+$username = '';
+if (isset($_SESSION['user_id'])) {
+    $userId = $_SESSION['user_id'];
+    $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
+    $stmt->bind_param("i", $userId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $user = $result->fetch_assoc();
+    $stmt->close();
+    $username = $user['username'] ?? '';
+}
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <link rel="stylesheet" href="../css/style.css">
     <style>
         body {
@@ -23,7 +42,7 @@
             margin: 0;
             padding: 0 20px;
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-start;
             align-items: center;
         }
 
@@ -36,6 +55,7 @@
             text-decoration: none;
             padding: 10px 15px;
             display: block;
+            font-family: 'Lexend', sans-serif;
         }
 
         .navbar a:hover {
@@ -89,36 +109,19 @@
 <body>
     <nav class="navbar">
         <ul>
+            <li><a href="admin_home.php">Trang Chủ Admin</a></li>
             <li><a href="admin_menu.php">Quản Lý Menu</a></li>
             <li class="user-menu">
-                <?php
-                include 'dbconnection.php';
-
-                if (isset($_SESSION['user_id'])) {
-                    $userId = $_SESSION['user_id'];
-                    $stmt = $conn->prepare("SELECT username, is_admin FROM users WHERE id = ?");
-                    $stmt->bind_param("i", $userId);
-                    $stmt->execute();
-                    $result = $stmt->get_result();
-                    $user = $result->fetch_assoc();
-                    $stmt->close();
-
-                    if ($user['is_admin'] != 1) {
-                        header("Location: ../index.php");
-                        exit;
-                    }
-
-                    echo '<div class="dropdown">';
-                    echo '<a href="#" class="dropbtn">' . htmlspecialchars($user['username']) . '</a>';
-                    echo '<div class="dropdown-content">';
-                    echo '<a href="admin_logout.php">Đăng Xuất</a>'; // Thay user_logout.php
-                    echo '</div>';
-                    echo '</div>';
-                } else {
-                    header("Location: admin_login.php");
-                    exit;
-                }
-                ?>
+                <?php if (isset($_SESSION['user_id']) && !empty($username)): ?>
+                    <div class="dropdown">
+                        <a href="#" class="dropbtn"><?php echo htmlspecialchars($username); ?></a>
+                        <div class="dropdown-content">
+                            <a href="admin_logout.php">Đăng Xuất</a>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <a href="admin_login.php">Đăng Nhập</a>
+                <?php endif; ?>
             </li>
         </ul>
     </nav>

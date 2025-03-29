@@ -2,50 +2,109 @@
 session_start();
 include 'dbconnection.php';
 
-// Ngăn cache để tránh tự động đăng nhập lại
+// Ngăn cache
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Cache-Control: post-check=0, pre-check=0", false);
 header("Pragma: no-cache");
 header("Expires: 0");
 
-// Kiểm tra đăng nhập
-if (!isset($_SESSION['user_id'])) {
-    header("Location: user_login.php");
-    exit;
+// Kiểm tra trạng thái đăng nhập
+$isLoggedIn = isset($_SESSION['user_id']);
+
+// Khởi tạo giỏ hàng nếu người dùng đã đăng nhập
+if ($isLoggedIn) {
+    if (!isset($_SESSION['cart'])) {
+        $_SESSION['cart'] = [];
+    }
+
+    // Xử lý thêm vào giỏ hàng
+    if (isset($_POST['add_to_cart'])) {
+        $itemId = intval($_POST['item_id']);
+        if (!isset($_SESSION['cart'][$itemId])) {
+            $_SESSION['cart'][$itemId] = 1;
+        } else {
+            $_SESSION['cart'][$itemId]++;
+        }
+        $redirectParams = [];
+        if (isset($_GET['search'])) {
+            $redirectParams[] = "search=" . urlencode($_GET['search']);
+        }
+        if (isset($_GET['sort'])) {
+            $redirectParams[] = "sort=" . $_GET['sort'];
+        }
+        if (isset($_GET['categories'])) {
+            $redirectParams[] = "categories=" . urlencode($_GET['categories']);
+        }
+        $redirectUrl = "menu.php?added=1" . (!empty($redirectParams) ? "&" . implode("&", $redirectParams) : "");
+        header("Location: $redirectUrl");
+        exit;
+    }
 }
 
-// Kiểm tra quyền admin
-$userId = $_SESSION['user_id'];
-$stmt = $conn->prepare("SELECT is_admin FROM users WHERE id = ?");
-$stmt->bind_param("i", $userId);
+// Lấy danh sách danh mục
+$categories = [];
+$stmt = $conn->prepare("SELECT * FROM categories ORDER BY name ASC");
 $stmt->execute();
 $result = $stmt->get_result();
-$user = $result->fetch_assoc();
+while ($category = $result->fetch_assoc()) {
+    $categories[] = $category;
+}
 $stmt->close();
 
-if ($user['is_admin'] == 1) {
-    session_unset();
-    session_destroy();
-    header("Location: user_login.php?error=2");
-    exit;
+// Lấy danh mục được chọn từ URL
+$selectedCategories = [];
+if (isset($_GET['categories'])) {
+    $selectedCategories = array_map('intval', explode(',', $_GET['categories']));
 }
 
-// Khởi tạo giỏ hàng nếu chưa có
-if (!isset($_SESSION['cart'])) {
-    $_SESSION['cart'] = [];
+// Lấy danh sách món ăn
+$search = isset($_GET['search']) ? $conn->real_escape_string($_GET['search']) : '';
+$sort = isset($_GET['sort']) ? $_GET['sort'] : 'rating_desc';
+
+$orderBy = "m.rating DESC";
+if ($sort == 'rating_asc') {
+    $orderBy = "m.rating ASC";
+} elseif ($sort == 'asc') {
+    $orderBy = "m.price ASC";
+} elseif ($sort == 'desc') {
+    $orderBy = "m.price DESC";
 }
 
-// Xử lý thêm vào giỏ hàng
-if (isset($_POST['add_to_cart'])) {
-    $itemId = intval($_POST['item_id']);
-    if (!isset($_SESSION['cart'][$itemId])) {
-        $_SESSION['cart'][$itemId] = 1;
-    } else {
-        $_SESSION['cart'][$itemId]++;
+$sql = "SELECT DISTINCT m.* 
+        FROM menu m 
+        LEFT JOIN menu_categories mc ON m.id = mc.menu_id 
+        LEFT JOIN categories c ON mc.category_id = c.id 
+        WHERE (m.combo_name LIKE ? OR m.description LIKE ?)";
+$params = ["%$search%", "%$search%"];
+$types = "ss";
+
+if (!empty($selectedCategories)) {
+    $placeholders = implode(',', array_fill(0, count($selectedCategories), '?'));
+    $sql .= " AND mc.category_id IN ($placeholders)";
+    $params = array_merge($params, $selectedCategories);
+    $types .= str_repeat('i', count($selectedCategories));
+}
+
+$sql .= " ORDER BY $orderBy";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param($types, ...$params);
+$stmt->execute();
+$result = $stmt->get_result();
+$menuItems = [];
+while ($row = $result->fetch_assoc()) {
+    // Lấy danh mục của món
+    $stmt_cat = $conn->prepare("SELECT c.name FROM categories c JOIN menu_categories mc ON c.id = mc.category_id WHERE mc.menu_id = ?");
+    $stmt_cat->bind_param("i", $row['id']);
+    $stmt_cat->execute();
+    $cat_result = $stmt_cat->get_result();
+    $row['categories'] = [];
+    while ($cat = $cat_result->fetch_assoc()) {
+        $row['categories'][] = $cat['name'];
     }
-    header("Location: menu.php?added=1" . (isset($_GET['search']) ? "&search=" . urlencode($_GET['search']) : "") . (isset($_GET['sort']) ? "&sort=" . $_GET['sort'] : ""));
-    exit;
+    $stmt_cat->close();
+    $menuItems[] = $row;
 }
+$stmt->close();
 ?>
 
 <?php include 'user_header.php'; ?>
@@ -72,23 +131,6 @@ if (isset($_POST['add_to_cart'])) {
         h1, h2, h3 {
             font-family: 'Lexend', sans-serif;
             font-weight: 600;
-        }
-
-        .banner {
-            background-color: #f5c518; /* Màu vàng giống trong ảnh */
-            text-align: center;
-            padding: 2rem;
-            color: white;
-        }
-
-        .banner h1 {
-            margin: 0;
-            font-size: 2.5rem;
-        }
-
-        .banner p {
-            margin: 0.5rem 0 0;
-            font-size: 1.2rem;
         }
 
         .search-wrapper {
@@ -127,14 +169,49 @@ if (isset($_POST['add_to_cart'])) {
             color: #aaa;
         }
 
+        .category-buttons {
+            display: flex;
+            gap: 10px;
+            margin: 1.5rem 0;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .category-buttons label {
+            display: inline-block;
+        }
+
+        .category-buttons input[type="checkbox"] {
+            display: none;
+        }
+
+        .category-buttons .category-btn {
+            padding: 10px 20px;
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            text-decoration: none;
+            color: #333;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .category-buttons input[type="checkbox"]:checked + .category-btn {
+            background-color: #d4edda;
+        }
+
+        .category-buttons .category-btn:hover {
+            background-color: #e0e0e0;
+        }
+
         .menu-list {
             display: grid;
-            grid-template-columns: repeat(auto-fit, 18rem); /* Chiều rộng cố định 18rem, không giãn */
-            gap: 1.5rem; /* Khoảng cách giữa các món */
+            grid-template-columns: repeat(auto-fit, 18rem);
+            gap: 1.5rem;
             padding: 2rem;
             max-width: 100vw;
             margin: 0 auto;
-            justify-content: center; /* Căn giữa các thẻ nếu ít hơn 5 */
+            justify-content: center;
         }
 
         .menu-item {
@@ -143,7 +220,7 @@ if (isset($_POST['add_to_cart'])) {
             border-radius: 10px;
             padding: 1rem;
             background-color: #fff;
-            width: 18rem; /* Chiều rộng cố định */
+            width: 18rem;
             box-sizing: border-box;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
@@ -163,6 +240,12 @@ if (isset($_POST['add_to_cart'])) {
         .menu-item p {
             font-size: 1rem;
             margin: 0.5rem 0;
+        }
+
+        .menu-item .category {
+            font-size: 0.9rem;
+            color: #666;
+            margin: 0.3rem 0;
         }
 
         .menu-item button {
@@ -216,7 +299,7 @@ if (isset($_POST['add_to_cart'])) {
             border-radius: 10px;
             padding: 1rem;
             background-color: #fff;
-            width: 18rem; /* Cùng chiều rộng với menu-item */
+            width: 18rem;
             box-sizing: border-box;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             margin: 0 auto;
@@ -224,7 +307,22 @@ if (isset($_POST['add_to_cart'])) {
             color: #666;
         }
 
-        /* Điều chỉnh cho màn hình nhỏ */
+        .login-prompt {
+            text-align: center;
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        .login-prompt a {
+            color: #333;
+            text-decoration: underline;
+        }
+
+        .login-prompt a:hover {
+            color: #555;
+        }
+
         @media (max-width: 60rem) {
             .menu-list {
                 grid-template-columns: repeat(auto-fit, 15rem);
@@ -254,16 +352,25 @@ if (isset($_POST['add_to_cart'])) {
             };
         }
 
+        function updateCategoryFilter() {
+            const checkboxes = document.querySelectorAll('input[name="categories[]"]:checked');
+            const selectedCategories = Array.from(checkboxes).map(cb => cb.value).join(',');
+            const form = document.getElementById('categoryForm');
+            const hiddenInput = document.getElementById('selectedCategories');
+            hiddenInput.value = selectedCategories;
+            form.submit();
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             const searchInput = document.getElementById('searchInput');
             const sortSelect = document.getElementById('sortSelect');
-            const form = document.getElementById('searchForm');
+            const searchForm = document.getElementById('searchForm');
 
-            const debouncedSubmit = debounce(() => form.submit(), 500);
+            const debouncedSubmit = debounce(() => searchForm.submit(), 500);
             searchInput.addEventListener('input', debouncedSubmit);
 
             sortSelect.addEventListener('change', function() {
-                form.submit();
+                searchForm.submit();
             });
 
             <?php if (isset($_GET['search'])): ?>
@@ -274,17 +381,35 @@ if (isset($_POST['add_to_cart'])) {
     </script>
 </head>
 <body>
-    <!-- Banner -->
-    <div class="banner">
-        <h1>Chào mừng đến với AFC</h1>
-        <p>Một ngày tuyệt vời để ăn gà!</p>
-    </div>
+
+    <?php include 'banner_slider.php'; ?>
 
     <?php
     if (isset($_GET['added']) && $_GET['added'] == 1) {
         echo "<p class='success-message'>Món ăn đã được thêm vào giỏ hàng!</p>";
     }
     ?>
+
+    <!-- Button danh mục -->
+    <div class="category-buttons">
+        <form id="categoryForm" method="GET" action="">
+            <?php foreach ($categories as $category): ?>
+                <label>
+                    <input type="checkbox" name="categories[]" value="<?php echo $category['id']; ?>" 
+                        <?php echo in_array($category['id'], $selectedCategories) ? 'checked' : ''; ?>
+                        onchange="updateCategoryFilter()">
+                    <span class="category-btn"><?php echo htmlspecialchars($category['name']); ?></span>
+                </label>
+            <?php endforeach; ?>
+            <input type="hidden" name="categories" id="selectedCategories" value="<?php echo htmlspecialchars(implode(',', $selectedCategories)); ?>">
+            <?php if (isset($_GET['search'])): ?>
+                <input type="hidden" name="search" value="<?php echo htmlspecialchars($_GET['search']); ?>">
+            <?php endif; ?>
+            <?php if (isset($_GET['sort'])): ?>
+                <input type="hidden" name="sort" value="<?php echo htmlspecialchars($_GET['sort']); ?>">
+            <?php endif; ?>
+        </form>
+    </div>
 
     <!-- Thanh tìm kiếm và lọc -->
     <div class="search-filter">
@@ -299,31 +424,20 @@ if (isset($_POST['add_to_cart'])) {
                 <option value="asc" <?= isset($_GET['sort']) && $_GET['sort'] == 'asc' ? 'selected' : '' ?>>Giá: Thấp đến Cao</option>
                 <option value="desc" <?= isset($_GET['sort']) && $_GET['sort'] == 'desc' ? 'selected' : '' ?>>Giá: Cao đến Thấp</option>
             </select>
+            <?php if (!empty($selectedCategories)): ?>
+                <input type="hidden" name="categories" value="<?php echo htmlspecialchars(implode(',', $selectedCategories)); ?>">
+            <?php endif; ?>
         </form>
     </div>
 
     <!-- Danh sách món ăn -->
     <div class="menu-list">
         <?php
-        $search = isset($_GET['search']) ? $conn->real_escape_string($_GET['search']) : '';
-        $sort = isset($_GET['sort']) ? $_GET['sort'] : 'rating_desc';
-
-        $orderBy = "rating DESC";
-        if ($sort == 'rating_asc') {
-            $orderBy = "rating ASC";
-        } elseif ($sort == 'asc') {
-            $orderBy = "price ASC";
-        } elseif ($sort == 'desc') {
-            $orderBy = "price DESC";
-        }
-
-        $sql = "SELECT * FROM menu WHERE combo_name LIKE '%$search%' OR description LIKE '%$search%' ORDER BY $orderBy";
-        $result = $conn->query($sql);
-
-        if ($result && $result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
+        if (!empty($menuItems)) {
+            foreach ($menuItems as $row) {
                 echo "<div class='menu-item'>";
                 echo "<h2>" . htmlspecialchars($row['combo_name']) . "</h2>";
+                echo "<p class='category'>" . htmlspecialchars(implode(", ", $row['categories'])) . "</p>";
                 echo "<p>" . htmlspecialchars($row['description']) . "</p>";
                 echo "<p>Giá: " . number_format($row['price'], 0, ',', '.') . " VND</p>";
                 if (!empty($row['image'])) {
@@ -347,21 +461,26 @@ if (isset($_POST['add_to_cart'])) {
 
                 echo "<div>";
                 echo "<button onclick=\"location.href='details.php?id=" . $row['id'] . "'\">Xem thêm</button>";
-                echo "<form method='POST' action='' style='display:inline;'>";
-                echo "<input type='hidden' name='item_id' value='" . $row['id'] . "'>";
-                echo "<button type='submit' name='add_to_cart'>Thêm vào giỏ hàng</button>";
-                echo "</form>";
+                if ($isLoggedIn) {
+                    echo "<form method='POST' action='' style='display:inline;'>";
+                    echo "<input type='hidden' name='item_id' value='" . $row['id'] . "'>";
+                    echo "<button type='submit' name='add_to_cart'>Thêm vào giỏ hàng</button>";
+                    echo "</form>";
+                } else {
+                    echo "<p class='login-prompt'><a href='user_login.php'>Đăng nhập</a> để thêm vào giỏ hàng</p>";
+                }
                 echo "</div>";
                 echo "</div>";
             }
         } else {
             echo "<p class='no-items'>Không tìm thấy món ăn nào!</p>";
         }
-
-        $conn->close();
         ?>
     </div>
 </body>
 </html>
 
-<?php include 'footer.php'; ?>
+<?php
+$conn->close();
+include 'footer.php';
+?>

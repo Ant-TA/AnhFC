@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     if ($user && password_verify($password, $user['password']) && $user['is_admin'] == 1) {
         $_SESSION['user_id'] = $user['id'];
-        header("Location: admin_menu.php");
+        header("Location: admin_home.php");
         exit;
     } else {
         header("Location: admin_login.php?error=1");

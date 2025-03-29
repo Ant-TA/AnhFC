@@ -14,9 +14,9 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Kiểm tra quyền admin và lấy địa chỉ
+// Kiểm tra quyền admin và lấy thông tin người dùng
 $userId = $_SESSION['user_id'];
-$stmt = $conn->prepare("SELECT is_admin, address FROM users WHERE id = ?");
+$stmt = $conn->prepare("SELECT is_admin, address, restrict_cod, restrict_order FROM users WHERE id = ?");
 $stmt->bind_param("i", $userId);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -38,63 +38,121 @@ if ($user['is_admin'] == 1) {
     exit;
 }
 
-// Khởi tạo giỏ hàng nếu chưa có
-if (!isset($_SESSION['cart'])) {
-    $_SESSION['cart'] = [];
-}
+// Lấy trạng thái restrict_cod và restrict_order
+$restrictCod = $user['restrict_cod'];
+$restrictOrder = $user['restrict_order'];
 
-// Biến để lưu thông báo lỗi
-$error = '';
+// Kiểm tra trạng thái hạn chế đặt hàng
+if ($restrictOrder == 1) {
+    $error = "Tài khoản bị hạn chế đặt hàng.";
+} else {
+    // Khởi tạo giỏ hàng nếu chưa có
+    if (!isset($_SESSION['cart'])) {
+        $_SESSION['cart'] = [];
+    }
 
-// Xử lý đặt hàng
-if (isset($_POST['place_order'])) {
-    $shippingAddress = $conn->real_escape_string($_POST['shipping_address']);
-    $paymentMethod = $conn->real_escape_string($_POST['payment_method']);
+    // Khởi tạo danh sách voucher đã áp dụng nếu chưa có
+    if (!isset($_SESSION['applied_vouchers'])) {
+        $_SESSION['applied_vouchers'] = [];
+    }
 
-    // Kiểm tra địa chỉ giao hàng không rỗng
-    if (empty(trim($shippingAddress))) {
-        $error = "Địa chỉ giao hàng không được để trống!";
-    } else {
-        $total = 0;
+    // Biến để lưu thông báo lỗi
+    $error = '';
 
-        // Tính tổng tiền
-        foreach ($_SESSION['cart'] as $itemId => $quantity) {
-            $stmt = $conn->prepare("SELECT price FROM menu WHERE id = ?");
-            $stmt->bind_param("i", $itemId);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $item = $result->fetch_assoc();
-            $stmt->close();
-            $total += $item['price'] * $quantity;
-        }
-
-        // Lưu đơn hàng vào bảng orders
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, total_amount, shipping_address, payment_method) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("idss", $userId, $total, $shippingAddress, $paymentMethod);
+    // Tính tổng tiền gốc và lấy thông tin giảm giá
+    $total = 0;
+    foreach ($_SESSION['cart'] as $itemId => $quantity) {
+        $stmt = $conn->prepare("SELECT price FROM menu WHERE id = ?");
+        $stmt->bind_param("i", $itemId);
         $stmt->execute();
-        $orderId = $stmt->insert_id;
+        $result = $stmt->get_result();
+        $item = $result->fetch_assoc();
         $stmt->close();
+        $total += $item['price'] * $quantity;
+    }
 
-        // Lưu chi tiết đơn hàng vào bảng order_items
-        foreach ($_SESSION['cart'] as $itemId => $quantity) {
-            $stmt = $conn->prepare("SELECT price FROM menu WHERE id = ?");
-            $stmt->bind_param("i", $itemId);
+    // Lấy tổng tiền sau giảm giá từ session
+    $finalTotal = isset($_SESSION['final_total']) ? $_SESSION['final_total'] : $total;
+    $totalDiscount = $total - $finalTotal;
+
+    // Lấy thông tin các voucher đã áp dụng
+    $appliedVouchers = [];
+    if (!empty($_SESSION['applied_vouchers'])) {
+        $voucherIds = implode(',', array_map('intval', $_SESSION['applied_vouchers']));
+        $stmt = $conn->prepare("SELECT id, code, discount_percent, max_discount_value, fixed_discount, min_order_value FROM vouchers WHERE id IN ($voucherIds)");
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $appliedVouchers = $result->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    }
+
+    // Xử lý đặt hàng
+    if (isset($_POST['place_order'])) {
+        $shippingAddress = $conn->real_escape_string($_POST['shipping_address']);
+        $receiverName = $conn->real_escape_string($_POST['receiver_name']);
+        $receiverPhone = $conn->real_escape_string($_POST['receiver_phone']);
+        $paymentMethod = $conn->real_escape_string($_POST['payment_method']);
+
+        // Kiểm tra nếu người dùng bị hạn chế COD và chọn COD
+        if ($restrictCod && $paymentMethod === 'COD') {
+            $error = "Bạn không thể chọn phương thức thanh toán COD do tài khoản của bạn đã bị hạn chế.";
+        } elseif (empty(trim($shippingAddress))) {
+            $error = "Địa chỉ giao hàng không được để trống!";
+        } elseif (empty(trim($receiverName))) {
+            $error = "Tên người nhận không được để trống!";
+        } elseif (empty(trim($receiverPhone))) {
+            $error = "Số điện thoại giao hàng không được để trống!";
+        } elseif (!preg_match('/^[0-9]{10,15}$/', $receiverPhone)) {
+            $error = "Số điện thoại không hợp lệ! Vui lòng nhập số điện thoại từ 10 đến 15 chữ số.";
+        } else {
+            // Lưu đơn hàng vào bảng orders
+            $stmt = $conn->prepare("INSERT INTO orders (user_id, total_amount, final_amount, shipping_address, receiver_name, receiver_phone, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("iddssss", $userId, $total, $finalTotal, $shippingAddress, $receiverName, $receiverPhone, $paymentMethod);
             $stmt->execute();
-            $result = $stmt->get_result();
-            $item = $result->fetch_assoc();
+            $orderId = $stmt->insert_id;
             $stmt->close();
 
-            $price = $item['price'];
-            $stmt = $conn->prepare("INSERT INTO order_items (order_id, item_id, quantity, price) VALUES (?, ?, ?, ?)");
-            $stmt->bind_param("iiid", $orderId, $itemId, $quantity, $price);
-            $stmt->execute();
-            $stmt->close();
+            // Lưu chi tiết đơn hàng vào bảng order_items
+            foreach ($_SESSION['cart'] as $itemId => $quantity) {
+                $stmt = $conn->prepare("SELECT price FROM menu WHERE id = ?");
+                $stmt->bind_param("i", $itemId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                $item = $result->fetch_assoc();
+                $stmt->close();
+
+                $price = $item['price'];
+                $stmt = $conn->prepare("INSERT INTO order_items (order_id, item_id, quantity, price) VALUES (?, ?, ?, ?)");
+                $stmt->bind_param("iiid", $orderId, $itemId, $quantity, $price);
+                $stmt->execute();
+                $stmt->close();
+            }
+
+            // Lưu danh sách voucher đã áp dụng vào bảng order_vouchers
+            if (!empty($_SESSION['applied_vouchers'])) {
+                foreach ($_SESSION['applied_vouchers'] as $voucherId) {
+                    $stmt = $conn->prepare("INSERT INTO order_vouchers (order_id, voucher_id) VALUES (?, ?)");
+                    $stmt->bind_param("ii", $orderId, $voucherId);
+                    $stmt->execute();
+                    $stmt->close();
+                }
+            }
+
+            // Giảm số lượng của các voucher đã sử dụng
+            foreach ($_SESSION['applied_vouchers'] as $voucherId) {
+                $stmt = $conn->prepare("UPDATE vouchers SET quantity = quantity - 1 WHERE id = ? AND quantity IS NOT NULL");
+                $stmt->bind_param("i", $voucherId);
+                $stmt->execute();
+                $stmt->close();
+            }
+
+            // Xóa giỏ hàng và danh sách voucher đã áp dụng sau khi đặt hàng
+            unset($_SESSION['cart']);
+            unset($_SESSION['applied_vouchers']);
+            unset($_SESSION['final_total']);
+            header("Location: user_cart.php?ordered=1");
+            exit;
         }
-
-        // Xóa giỏ hàng sau khi đặt hàng
-        unset($_SESSION['cart']);
-        header("Location: user_cart.php?ordered=1");
-        exit;
     }
 }
 ?>
@@ -156,34 +214,60 @@ if (isset($_POST['place_order'])) {
             border-radius: 5px;
         }
 
-        .total {
+        .total-section {
             text-align: right;
-            font-size: 1.5em;
+            font-size: 1.2em;
             margin-top: 20px;
         }
 
-        .payment-method, .shipping-address {
+        .total-section p {
+            margin: 5px 0;
+        }
+
+        .voucher-section {
             margin: 20px 0;
         }
 
-        .payment-method label, .shipping-address label {
+        .voucher-section h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .voucher-list {
+            margin-bottom: 15px;
+        }
+
+        .voucher-item {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+
+        .payment-method, .shipping-info {
+            margin: 20px 0;
+        }
+
+        .payment-method label, .shipping-info label {
             display: block;
             font-weight: bold;
             margin-bottom: 10px;
         }
 
-        .payment-method select, .shipping-address textarea {
+        .payment-method select, .shipping-info input, .shipping-info textarea {
             width: 100%;
             padding: 10px;
             border: 1px solid #ddd;
             border-radius: 5px;
             font-size: 1rem;
+            margin-bottom: 10px;
         }
 
-        .shipping-address textarea {
-            height: 100px; /* Chiều cao ban đầu */
-            resize: none; /* Tắt điều chỉnh thủ công */
-            overflow: hidden; /* Ẩn thanh cuộn */
+        .shipping-info textarea {
+            height: 100px;
+            resize: none;
+            overflow: hidden;
         }
 
         .confirm-btn {
@@ -226,19 +310,19 @@ if (isset($_POST['place_order'])) {
         }
     </style>
     <script>
-        // Script để tự động điều chỉnh chiều cao textarea
         function autoResizeTextarea(element) {
-            element.style.height = '100px'; // Chiều cao ban đầu
-            element.style.height = `${element.scrollHeight}px`; // Điều chỉnh theo nội dung
+            element.style.height = '100px';
+            element.style.height = `${element.scrollHeight}px`;
         }
 
         document.addEventListener('DOMContentLoaded', function() {
             const textarea = document.getElementById('shipping_address');
-            textarea.addEventListener('input', function() {
-                autoResizeTextarea(this);
-            });
-            // Gọi lần đầu để điều chỉnh nếu có nội dung ban đầu
-            autoResizeTextarea(textarea);
+            if (textarea) {
+                textarea.addEventListener('input', function() {
+                    autoResizeTextarea(this);
+                });
+                autoResizeTextarea(textarea);
+            }
         });
     </script>
 </head>
@@ -246,7 +330,13 @@ if (isset($_POST['place_order'])) {
     <div class="checkout-container">
         <h1>Thanh Toán</h1>
 
-        <?php if (empty($_SESSION['cart'])): ?>
+        <?php if (!empty($error)): ?>
+            <p class="error"><?php echo htmlspecialchars($error); ?></p>
+        <?php endif; ?>
+
+        <?php if ($restrictOrder == 1): ?>
+            <p class="empty-cart">Bạn không thể đặt hàng do tài khoản bị hạn chế. Vui lòng liên hệ admin để biết thêm chi tiết.</p>
+        <?php elseif (empty($_SESSION['cart'])): ?>
             <p class="empty-cart">Giỏ hàng của bạn đang trống, thêm món ăn <a href="menu.php">tại đây</a>!</p>
         <?php else: ?>
             <h2>Thông Tin Giỏ Hàng</h2>
@@ -259,7 +349,6 @@ if (isset($_POST['place_order'])) {
                     <th>Tổng</th>
                 </tr>
                 <?php
-                $total = 0;
                 foreach ($_SESSION['cart'] as $itemId => $quantity) {
                     $stmt = $conn->prepare("SELECT combo_name, price, image FROM menu WHERE id = ?");
                     $stmt->bind_param("i", $itemId);
@@ -270,10 +359,12 @@ if (isset($_POST['place_order'])) {
 
                     if ($item) {
                         $subtotal = $item['price'] * $quantity;
-                        $total += $subtotal;
+                        $imagePath = !empty($item['image']) && file_exists("../images/" . $item['image']) 
+                            ? "/AnhFC/images/" . htmlspecialchars($item['image']) 
+                            : "/AnhFC/images/default_image.jpg";
 
                         echo "<tr>";
-                        echo "<td><img src='../images/" . htmlspecialchars($item['image']) . "' alt='" . htmlspecialchars($item['combo_name']) . "'></td>";
+                        echo "<td><img src='$imagePath' alt='" . htmlspecialchars($item['combo_name']) . "'></td>";
                         echo "<td>" . htmlspecialchars($item['combo_name']) . "</td>";
                         echo "<td>" . number_format($item['price'], 0, ',', '.') . " VND</td>";
                         echo "<td>" . $quantity . "</td>";
@@ -283,25 +374,55 @@ if (isset($_POST['place_order'])) {
                 }
                 ?>
             </table>
-            <div class="total">Tổng cộng: <?php echo number_format($total, 0, ',', '.'); ?> VND</div>
 
-            <?php if (!empty($error)): ?>
-                <p class="error"><?php echo $error; ?></p>
+            <!-- Hiển thị danh sách voucher đã áp dụng -->
+            <?php if (!empty($appliedVouchers)): ?>
+                <div class="voucher-section">
+                    <h3>Voucher Đã Áp Dụng</h3>
+                    <div class="voucher-list">
+                        <?php foreach ($appliedVouchers as $voucher): ?>
+                            <div class="voucher-item">
+                                <?php
+                                $discountText = $voucher['fixed_discount'] ? "Giảm " . number_format($voucher['fixed_discount'], 0, ',', '.') . " VND" : "Giảm " . number_format($voucher['discount_percent'], 0) . "% (Tối đa " . number_format($voucher['max_discount_value'], 0, ',', '.') . " VND)";
+                                $conditionText = isset($voucher['min_order_value']) && $voucher['min_order_value'] > 0 ? " (Đơn tối thiểu " . number_format($voucher['min_order_value'], 0, ',', '.') . " VND)" : "";
+                                echo htmlspecialchars($voucher['code']) . " - $discountText$conditionText";
+                                ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
             <?php endif; ?>
+
+            <!-- Hiển thị tổng tiền -->
+            <div class="total-section">
+                <p>Tổng cộng: <?php echo number_format($total, 0, ',', '.'); ?> VND</p>
+                <?php if ($totalDiscount > 0): ?>
+                    <p>Giảm giá: <?php echo number_format($totalDiscount, 0, ',', '.'); ?> VND</p>
+                    <p>Tổng sau giảm giá: <?php echo number_format($finalTotal, 0, ',', '.'); ?> VND</p>
+                <?php endif; ?>
+            </div>
 
             <form method="POST" action="">
                 <div class="payment-method">
                     <label for="payment_method">Phương thức thanh toán:</label>
                     <select name="payment_method" id="payment_method" required>
-                        <option value="COD">Thanh toán khi nhận hàng (COD)</option>
+                        <?php if (!$restrictCod): ?>
+                            <option value="COD">Thanh toán khi nhận hàng (COD)</option>
+                        <?php endif; ?>
                         <option value="PayPal">PayPal (Giả lập)</option>
                         <option value="BankCard">Thẻ ngân hàng (Giả lập)</option>
                     </select>
                 </div>
 
-                <div class="shipping-address">
+                <div class="shipping-info">
+                    <label for="receiver_name">Tên người nhận:</label>
+                    <input type="text" name="receiver_name" id="receiver_name" placeholder="Nhập tên người nhận" required value="<?php echo isset($_POST['receiver_name']) ? htmlspecialchars($_POST['receiver_name']) : ''; ?>">
+
+                    <label for="receiver_phone">Số điện thoại giao hàng:</label>
+                    <input type="text" name="receiver_phone" id="receiver_phone" placeholder="Nhập số điện thoại giao hàng" required value="<?php echo isset($_POST['receiver_phone']) ? htmlspecialchars($_POST['receiver_phone']) : ''; ?>">
+
                     <label for="shipping_address">Địa chỉ giao hàng:</label>
-                    <textarea name="shipping_address" id="shipping_address" placeholder="Nhập địa chỉ giao hàng" required><?php echo (isset($user['address']) && !empty(trim($user['address']))) ? htmlspecialchars(trim($user['address'])) : ''; ?></textarea>
+                    <textarea name="shipping_address" id="shipping_address" placeholder="Nhập địa chỉ giao hàng" required><?php echo (isset($user['address']) && !empty(trim($user['address']))) ? htmlspecialchars(trim($user['address'])) : (isset($_POST['shipping_address']) ? htmlspecialchars($_POST['shipping_address']) : ''); ?></textarea>
                 </div>
 
                 <button type="submit" name="place_order" class="confirm-btn">Xác nhận đặt hàng</button>

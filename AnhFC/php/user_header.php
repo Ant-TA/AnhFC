@@ -1,14 +1,21 @@
 <?php
-include 'dbconnection.php';
+// Kiểm tra nếu chưa có session thì khởi tạo
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-// Không kiểm tra session hay is_admin ở đây, để trang chính xử lý
-if (isset($_SESSION['user_id'])) {
+// Kiểm tra trạng thái đăng nhập
+$isLoggedIn = isset($_SESSION['user_id']);
+
+// Nếu đã đăng nhập, lấy thông tin người dùng và số lượng món trong giỏ hàng
+if ($isLoggedIn) {
+    include 'dbconnection.php';
     $userId = $_SESSION['user_id'];
     $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
     $stmt->bind_param("i", $userId);
     $stmt->execute();
     $result = $stmt->get_result();
-    $headerUser = $result->fetch_assoc(); // Đổi tên biến $user thành $headerUser
+    $headerUser = $result->fetch_assoc();
     $stmt->close();
 
     // Tính số lượng món trong giỏ hàng
@@ -25,26 +32,37 @@ if (isset($_SESSION['user_id'])) {
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <link rel="stylesheet" href="../css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
-            background-image: url('../assets/BG.jpg');
-            background-size: cover;
-            background-attachment: fixed;
             margin: 0;
             padding: 0;
+            font-family: 'Lexend', sans-serif;
         }
 
         .navbar {
             background-color: #333;
             padding: 10px 0;
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 1000;
+        }
+
+        .navbar .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
         }
 
         .navbar ul {
             list-style-type: none;
             margin: 0;
-            padding: 0 20px;
+            padding: 0;
             display: flex;
-            justify-content: space-between;
             align-items: center;
         }
 
@@ -57,14 +75,21 @@ if (isset($_SESSION['user_id'])) {
             text-decoration: none;
             padding: 10px 15px;
             display: block;
+            font-family: 'Lexend', sans-serif;
+            font-size: 1em;
         }
 
         .navbar a:hover {
             background-color: #555;
+            border-radius: 5px;
         }
 
-        .navbar .user-menu {
-            margin-left: auto;
+        .nav-left {
+            display: flex;
+            align-items: center;
+        }
+
+        .nav-right {
             display: flex;
             align-items: center;
         }
@@ -80,9 +105,13 @@ if (isset($_SESSION['user_id'])) {
             background-color: #000;
             min-width: 120px;
             box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-            z-index: 1;
+            z-index: 1001;
             right: 0;
             border-radius: 5px;
+        }
+
+        .dropdown-content.active {
+            display: block;
         }
 
         .dropdown-content a {
@@ -96,16 +125,18 @@ if (isset($_SESSION['user_id'])) {
             background-color: #333;
         }
 
-        .dropdown:hover .dropdown-content {
-            display: block;
-        }
-
-        .dropdown:hover .dropbtn {
-            background-color: #555;
-        }
-
         .dropbtn {
             cursor: pointer;
+            color: white;
+            padding: 10px 15px;
+            display: block;
+            font-family: 'Lexend', sans-serif;
+            font-size: 1em;
+        }
+
+        .dropbtn:hover {
+            background-color: #555;
+            border-radius: 5px;
         }
 
         .cart-link {
@@ -116,30 +147,85 @@ if (isset($_SESSION['user_id'])) {
 
         .cart-link:hover {
             background-color: #555;
+            border-radius: 5px;
+        }
+
+        .logout-link {
+            background-color: #e74c3c;
+            border-radius: 5px;
+        }
+
+        .logout-link:hover {
+            background-color: #c0392b;
+        }
+
+        .login-link {
+            color: white;
+            padding: 10px 15px;
+            text-decoration: none;
+        }
+
+        .login-link:hover {
+            background-color: #555;
+            border-radius: 5px;
+        }
+
+        /* Đảm bảo nội dung không bị che bởi header cố định */
+        body {
+            padding-top: 60px;
         }
     </style>
 </head>
 <body>
     <nav class="navbar">
-        <ul>
-            <li><a href="../index.php">Trang Chủ</a></li>
-            <li><a href="menu.php">Danh Sách Món Ăn</a></li>
-            <li class="user-menu">
-                <?php
-                if (isset($_SESSION['user_id'])) {
-                    echo '<a href="user_cart.php" class="cart-link">Giỏ hàng (' . $cartCount . ')</a>';
-                    echo '<div class="dropdown">';
-                    echo '<a href="#" class="dropbtn">' . htmlspecialchars($headerUser['username']) . '</a>'; // Sử dụng $headerUser
-                    echo '<div class="dropdown-content">';
-                    echo '<a href="user_logout.php">Đăng Xuất</a>';
-                    echo '</div>';
-                    echo '</div>';
-                } else {
-                    echo '<a href="user_login.php">Đăng Nhập</a>';
-                }
-                ?>
-            </li>
-        </ul>
+        <div class="container">
+            <!-- Bên trái: Trang Chủ, Thực Đơn -->
+            <ul class="nav-left">
+                <li><a href="user_home.php">Trang Chủ</a></li>
+                <li><a href="menu.php">Thực Đơn</a></li>
+            </ul>
+
+            <!-- Bên phải: Giỏ Hàng, Tên người dùng (nếu đã đăng nhập) hoặc Đăng Nhập (nếu chưa đăng nhập) -->
+            <ul class="nav-right">
+                <?php if ($isLoggedIn): ?>
+                    <li><a href="user_cart.php" class="cart-link">Giỏ Hàng (<?php echo $cartCount; ?>)</a></li>
+                    <li>
+                        <div class="dropdown">
+                            <span class="dropbtn"><?php echo htmlspecialchars($headerUser['username']); ?></span>
+                            <div class="dropdown-content">
+                                <a href="user_profile.php">Quản Lý Thông Tin</a>
+                                <a href="user_logout.php" class="logout-link">Đăng Xuất</a>
+                            </div>
+                        </div>
+                    </li>
+                <?php else: ?>
+                    <li><a href="user_login.php" class="login-link">Đăng Nhập</a></li>
+                <?php endif; ?>
+            </ul>
+        </div>
     </nav>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropbtn = document.querySelector('.dropbtn');
+            const dropdownContent = document.querySelector('.dropdown-content');
+
+            // Kiểm tra nếu dropbtn tồn tại (chỉ khi người dùng đã đăng nhập)
+            if (dropbtn && dropdownContent) {
+                // Toggle dropdown khi bấm vào tên user
+                dropbtn.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                    dropdownContent.classList.toggle('active');
+                });
+
+                // Ẩn dropdown khi bấm ra ngoài
+                document.addEventListener('click', function(event) {
+                    if (!dropbtn.contains(event.target) && !dropdownContent.contains(event.target)) {
+                        dropdownContent.classList.remove('active');
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html>
