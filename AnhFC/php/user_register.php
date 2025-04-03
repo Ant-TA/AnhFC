@@ -1,5 +1,5 @@
 <?php
-include 'header.php'; // Thêm header từ file riêng
+include 'user_header.php'; // Thêm header từ file riêng
 ?>
 
 <!DOCTYPE html>
@@ -13,6 +13,9 @@ include 'header.php'; // Thêm header từ file riêng
     <style>
         body {
             font-family: 'Lexend', sans-serif;
+            background-image: url('../assets/BG.jpg');
+            background-size: cover;
+            background-attachment: fixed;
         }
 
         h1, h2, h3 {
